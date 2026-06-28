@@ -37,7 +37,17 @@ export function TestConfigPanel({
   ) => setConfig((prev) => ({ ...prev, [key]: value }))
 
   const updateMarksDist = (type: QuestionType, marks: number) => {
-    setConfig(prev => ({ ...prev, marksDistribution: { ...prev.marksDistribution, [type]: marks } }))
+    setConfig(prev => {
+      const marksDistribution = { ...prev.marksDistribution, [type]: marks }
+      // Keep totalMarks in sync with the distribution so the two can never
+      // diverge (the prompt derives its total from the distribution anyway,
+      // but staying consistent in stored state avoids surprises elsewhere).
+      const totalMarks = Object.values(marksDistribution).reduce<number>(
+        (sum, m) => sum + (Number(m) || 0),
+        0,
+      )
+      return { ...prev, marksDistribution, totalMarks }
+    })
   }
 
   return (
@@ -178,12 +188,12 @@ export function TestConfigPanel({
         </CardContent>
       </Card>
 
-      <div className="flex items-center justify-between">
+      <div className="sticky bottom-0 z-20 mt-2 flex items-center gap-2 border-t bg-background/95 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80 sm:static sm:z-auto sm:mt-0 sm:justify-between sm:border-0 sm:bg-transparent sm:py-0 sm:backdrop-blur-none">
         <Button variant="ghost" onClick={onBack} className="gap-1.5">
           <ArrowLeft className="h-4 w-4" />
-          Back
+          <span className="hidden sm:inline">Back</span>
         </Button>
-        <Button onClick={onGenerate} size="lg" className="gap-2">
+        <Button onClick={onGenerate} size="lg" className="flex-1 gap-2 sm:flex-initial">
           <Sparkles className="h-4 w-4" />
           Generate Test
         </Button>

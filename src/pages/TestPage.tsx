@@ -1,26 +1,32 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { useLocation, useParams } from "wouter"
+import { X } from "lucide-react"
 import { toast } from "sonner"
 
+import { Button } from "@/components/ui/button"
 import { TestHeader } from "@/components/test/TestHeader"
 import { QuestionCard } from "@/components/test/QuestionCard"
 import { QuestionNavBar } from "@/components/test/QuestionNavBar"
 import { QuestionMapSheet } from "@/components/test/QuestionMapSheet"
 import { SubmitDialog } from "@/components/test/SubmitDialog"
 import { EmptyState } from "@/components/common/EmptyState"
+import { LoadingOverlay } from "@/components/common/LoadingOverlay"
 import { useApp } from "@/context/AppContext"
+import { useApiKey } from "@/context/ApiKeyContext"
+import { useTestHistory } from "@/hooks/useTestHistory"
 import { useTimer } from "@/hooks/useTimer"
-import { gradeTest } from "@/lib/gemini"
+import { gradeTestSemantic } from "@/lib/gemini"
 import { PageTransition } from "@/components/layout/PageTransition"
 import { FileQuestion } from "lucide-react"
 import type {
   GeneratedTest,
-  TestResult,
 } from "@/types/test"
 
 export function TestPage() {
   const params = useParams<{ id: string }>()
   const { getTest, saveResult } = useApp()
+  const { apiKey } = useApiKey()
+  const { addEntry } = useTestHistory()
   const [, navigate] = useLocation()
 
   const test = params.id ? getTest(params.id) : undefined
@@ -30,7 +36,9 @@ export function TestPage() {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [mapOpen, setMapOpen] = useState(false)
   const [submitOpen, setSubmitOpen] = useState(false)
+  const [isGrading, setIsGrading] = useState(false)
   const startTimeRef = useRef<number>(Date.now())
+  const gradingCancelledRef = useRef(false)
 
   // Flatten all questions for navigation, keeping track of section
   const allQuestions = useMemo(() => {
@@ -54,7 +62,7 @@ export function TestPage() {
 
   const handleExpire = () => {
     toast.warning("Time's up!", {
-      description: "Your test has been auto-submitted.",
+      description: "Your test is being graded.",
     })
     if (test) void doSubmit(test)
   }
@@ -135,13 +143,37 @@ export function TestPage() {
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
 
-  function doSubmit(testToSubmit: GeneratedTest): TestResult {
+  async function doSubmit(testToSubmit: GeneratedTest): Promise<void> {
     timer.pause()
+    gradingCancelledRef.current = false
     const elapsed = Math.round((Date.now() - startTimeRef.current) / 1000)
-    const result = gradeTest(testToSubmit, answers, elapsed)
-    saveResult(result)
-    navigate(`/results/${testToSubmit.id}`)
-    return result
+    setIsGrading(true)
+    try {
+      const result = await gradeTestSemantic(
+        testToSubmit,
+        answers,
+        apiKey,
+        elapsed,
+      )
+      if (gradingCancelledRef.current) return
+      saveResult(result)
+      addEntry(testToSubmit, result)
+      navigate(`/results/${testToSubmit.id}`)
+    } catch (err) {
+      setIsGrading(false)
+      toast.error("Grading failed", {
+        description: err instanceof Error ? err.message : "Please try again.",
+        action: {
+          label: "Retry",
+          onClick: () => void doSubmit(testToSubmit),
+        },
+      })
+    }
+  }
+
+  const cancelGrading = () => {
+    gradingCancelledRef.current = true
+    setIsGrading(false)
   }
 
   return (
@@ -163,6 +195,17 @@ export function TestPage() {
       />
 
       <main className="container max-w-2xl space-y-4 py-6 pb-24 sm:pb-6">
+        <div className="flex justify-end">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="gap-1.5 text-muted-foreground"
+            onClick={() => navigate(`/test/${params.id}`)}
+          >
+            <X className="h-4 w-4" />
+            Exit test
+          </Button>
+        </div>
         {currentQuestion && (
           <QuestionCard
             question={currentQuestion}
@@ -211,9 +254,11 @@ export function TestPage() {
         unanswered={unansweredIndices}
         onConfirm={() => {
           setSubmitOpen(false)
-          if (test) doSubmit(test)
+          if (test) void doSubmit(test)
         }}
       />
+
+      {isGrading && <LoadingOverlay onCancel={cancelGrading} />}
     </PageTransition>
   )
 }

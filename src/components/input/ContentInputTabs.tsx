@@ -45,7 +45,7 @@ export function ContentInputTabs({ onNext }: ContentInputTabsProps) {
           setInput((prev) => ({ ...prev, inputMode: v as InputMode }))
         }
       >
-        <TabsList className="grid w-full max-w-xs grid-cols-2">
+        <TabsList className="mx-auto grid w-full max-w-xs grid-cols-2">
           <TabsTrigger value="image" className="gap-1.5">
             <ImageIcon className="h-4 w-4" />
             Upload Images

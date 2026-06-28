@@ -8,6 +8,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { ScoreRing } from "@/components/results/ScoreRing"
 import { TypeBreakdown } from "@/components/results/TypeBreakdown"
+import { getAllQuestions } from "@/lib/questions"
 import type { GeneratedTest, TestResult } from "@/types/test"
 
 interface ScoreCardProps {
@@ -33,10 +34,6 @@ function formatDuration(seconds?: number): string | null {
   const m = Math.floor(seconds / 60)
   const s = seconds % 60
   return `${m}:${String(s).padStart(2, "0")}`
-}
-
-export function getAllQuestions(test: GeneratedTest) {
-  return test.sections.flatMap(section => section.questions)
 }
 
 export function ScoreCard({ test, result }: ScoreCardProps) {

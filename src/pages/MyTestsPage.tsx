@@ -4,16 +4,13 @@ import {
   CalendarDays,
   ClipboardList,
   Eye,
+  FileStack,
+  PenLine,
   Trash2,
-  Trophy,
-  History,
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import {
   AlertDialog,
@@ -26,25 +23,25 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { EmptyState } from "@/components/common/EmptyState"
-import { useTestHistory } from "@/hooks/useTestHistory"
 import { PageTransition } from "@/components/layout/PageTransition"
-import { cn } from "@/lib/utils"
+import { useApp } from "@/context/AppContext"
 import { getAllQuestions } from "@/lib/questions"
+import { cn } from "@/lib/utils"
 
-export function HistoryPage() {
+export function MyTestsPage() {
   const [, navigate] = useLocation()
-  const { history, removeEntry, clearAll } = useTestHistory()
+  const { tests, removeTest, getResult } = useApp()
   const [confirmClear, setConfirmClear] = useState(false)
 
-  if (history.length === 0) {
+  if (tests.length === 0) {
     return (
       <PageTransition>
         <EmptyState
-          icon={ClipboardList}
+          icon={FileStack}
           title="No tests yet"
-          description="Generate your first test to see it here."
+          description="Generated tests live here. Create your first one to get started."
           action={{
-            label: "Start Studying",
+            label: "Generate a test",
             onClick: () => navigate("/app"),
           }}
         />
@@ -52,15 +49,18 @@ export function HistoryPage() {
     )
   }
 
+  const totalMarksOf = (t: (typeof tests)[number]) =>
+    Object.values(t.config.marksDistribution).reduce((a, b) => a + b, 0)
+
   return (
     <PageTransition>
       <div className="container max-w-3xl py-8 md:py-12">
         <div className="mb-8 flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-              <History className="h-4 w-4" />
+              <FileStack className="h-4 w-4" />
             </div>
-            <h1 className="text-2xl font-bold">Test History</h1>
+            <h1 className="text-2xl font-bold">My Tests</h1>
           </div>
 
           <Button
@@ -74,57 +74,83 @@ export function HistoryPage() {
         </div>
 
         <div className="space-y-3">
-          {history.map(({ test, result }) => {
-            const pct = result.total > 0 ? Math.round((result.score / result.total) * 100) : 0
+          {tests.map((test) => {
             const questions = getAllQuestions(test)
+            const marks = totalMarksOf(test)
+            const result = getResult(test.id)
+            const completed = !!result
+            const pct =
+              completed && result!.total > 0
+                ? Math.round((result!.score / result!.total) * 100)
+                : 0
+
             return (
-              <Card key={test.id} className="overflow-hidden transition-colors hover:bg-muted/50">
+              <Card
+                key={test.id}
+                className="overflow-hidden transition-colors hover:bg-muted/50"
+              >
                 <CardContent className="p-4">
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex-1 space-y-1">
-                      <div className="flex items-center gap-2">
-                        <h3 className="font-semibold leading-none truncate">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0 flex-1 space-y-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h3 className="min-w-0 truncate font-semibold leading-none">
                           {test.topic}
                         </h3>
                         <Badge
                           variant="outline"
                           className={cn(
-                            "ml-2 font-medium",
-                            pct >= 80 ? "bg-green-100 text-green-700 border-green-200" :
-                            pct >= 60 ? "bg-yellow-100 text-yellow-700 border-yellow-200" :
-                            "bg-red-100 text-red-700 border-red-200"
+                            "shrink-0 font-medium",
+                            completed
+                              ? pct >= 80
+                                ? "bg-green-100 text-green-700 border-green-200"
+                                : pct >= 60
+                                  ? "bg-yellow-100 text-yellow-700 border-yellow-200"
+                                  : "bg-red-100 text-red-700 border-red-200"
+                              : "bg-muted text-muted-foreground",
                           )}
                         >
-                          {pct}% &middot; {result.score}/{result.total}
+                          {completed ? `${pct}% · ${result!.score}/${result!.total}` : "Not started"}
                         </Badge>
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                      <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                         <span className="flex items-center gap-1">
                           <CalendarDays className="h-3 w-3" />
                           {new Date(test.createdAt).toLocaleDateString()}
                         </span>
                         <span className="flex items-center gap-1">
-                          <Trophy className="h-3 w-3" />
-                          {questions.length} questions
+                          <ClipboardList className="h-3 w-3" />
+                          {questions.length} questions · {marks} marks
                         </span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex shrink-0 flex-wrap items-center gap-1">
                       <Button
                         variant="ghost"
                         size="sm"
                         className="gap-1.5"
-                        onClick={() => navigate(`/results/${test.id}`)}
+                        onClick={() => navigate(`/test/${test.id}`)}
                       >
-                        <Eye className="h-4 w-4" />
-                        Review
+                        <PenLine className="h-4 w-4" />
+                        Open
                       </Button>
+                      {completed && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="gap-1.5"
+                          onClick={() => navigate(`/results/${test.id}`)}
+                        >
+                          <Eye className="h-4 w-4" />
+                          Review
+                        </Button>
+                      )}
                       <Button
                         variant="ghost"
                         size="sm"
                         className="text-muted-foreground hover:text-destructive"
-                        onClick={() => removeEntry(test.id)}
+                        onClick={() => removeTest(test.id)}
+                        aria-label="Delete test"
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -139,10 +165,10 @@ export function HistoryPage() {
         <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Clear all history?</AlertDialogTitle>
+              <AlertDialogTitle>Delete all generated tests?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will permanently remove all your saved tests and results.
-                This action cannot be undone.
+                This removes every test from your library. Completed results in
+                History are kept. This action cannot be undone.
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -150,11 +176,11 @@ export function HistoryPage() {
               <AlertDialogAction
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 onClick={() => {
-                  clearAll()
+                  tests.forEach((t) => removeTest(t.id))
                   setConfirmClear(false)
                 }}
               >
-                Clear All
+                Delete All
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

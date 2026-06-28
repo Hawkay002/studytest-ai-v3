@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react"
 import { useLocation } from "wouter"
 import { AnimatePresence, motion, useReducedMotion } from "motion/react"
+import { ChevronLeft, Sparkles } from "lucide-react"
 import { toast } from "sonner"
 
 import { StepIndicator } from "@/components/common/StepIndicator"
@@ -12,22 +13,22 @@ import { useApiKey } from "@/context/ApiKeyContext"
 import { useApiKeyModal } from "@/components/common/ApiKeyModal"
 import { useTestGenerator } from "@/hooks/useTestGenerator"
 import { dataUrlToInlinePart } from "@/lib/imageUtils"
+import type { GenerationProgress } from "@/lib/gemini"
 import { PageTransition } from "@/components/layout/PageTransition"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { ExportButtons } from "@/components/results/ExportButtons"
-import type { GeneratedTest } from "@/types/test"
+import { Card, CardContent } from "@/components/ui/card"
+import { Button } from "@/components/ui/button"
 
 export function AppPage() {
   const { step, setStep, input, config, saveTest, setActiveTestId } = useApp()
   const { apiKey, isKeySet } = useApiKey()
   const { open: openApiKey } = useApiKeyModal()
-  const { generate, isGenerating, error, cancelGeneration } =
+  const { generate, isGenerating, cancelGeneration } =
     useTestGenerator()
   const [, navigate] = useLocation()
   const reduce = useReducedMotion()
 
-  // State for generated test preview
-  const [generatedTest, setGeneratedTest] = useState<GeneratedTest | null>(null)
+  // Per-section progress for the chunked/text generation overlay.
+  const [progress, setProgress] = useState<GenerationProgress | null>(null)
 
   // Auto-open the API key modal on /app if no key is set.
   const askedForOpen = useRef(false)
@@ -44,21 +45,27 @@ export function AppPage() {
       return
     }
     setStep("generating")
+    setProgress(null)
     const images =
       input.inputMode === "image"
         ? input.images.map(dataUrlToInlinePart)
         : undefined
 
-    const test = await generate(apiKey, {
-      topic: input.topic,
-      context: input.context,
-      inputType: input.inputMode,
-      images,
-      config,
-    })
+    const { test, error } = await generate(
+      apiKey,
+      {
+        topic: input.topic,
+        context: input.context,
+        inputType: input.inputMode,
+        images,
+        config,
+      },
+      setProgress,
+    )
 
     if (!test) {
       setStep("config")
+      setProgress(null)
       if (error) {
         toast.error("Generation failed", {
           description: error,
@@ -71,13 +78,15 @@ export function AppPage() {
       return
     }
 
-    setGeneratedTest(test)
     saveTest(test)
     setActiveTestId(test.id)
-    setStep("done")
+    setProgress(null)
     toast.success("Test generated!", {
       description: `${test.sections.flatMap(s => s.questions).length} questions ready.`,
     })
+    // Land on the test hub (Take / Upload / Download PDFs) rather than an
+    // in-page preview — the hub is the single post-generation home for a test.
+    navigate(`/test/${test.id}`)
   }
 
   return (
@@ -115,66 +124,69 @@ export function AppPage() {
             </motion.div>
           )}
 
-          {step === "done" && generatedTest && (
+          {/* The "generating" step normally shows the full-screen LoadingOverlay
+              while a request is in flight. This branch is the safety net for
+              when generation is NOT actively running (cancelled, or stranded
+              while a slow request resolves) so the step is never a blank
+              dead-end — the user always has a Generate button to retry. */}
+          {step === "generating" && !isGenerating && (
             <motion.div
-              key="done"
+              key="generating-idle"
               initial={reduce ? false : { opacity: 0, x: 80 }}
               animate={{ opacity: 1, x: 0 }}
               exit={reduce ? undefined : { opacity: 0, x: -80 }}
               transition={{ duration: 0.25 }}
             >
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h1 className="text-2xl font-bold">{generatedTest.topic}</h1>
-                    <p className="text-muted-foreground mt-1">
-                      {generatedTest.sections.length} section(s),{" "}
-                      {generatedTest.sections.flatMap(s => s.questions).length}{" "}
-                      question(s), {Object.values(generatedTest.config.marksDistribution).reduce((a, b) => a + b, 0)} marks
+              <Card>
+                <CardContent className="flex flex-col items-center gap-4 p-8 text-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <Sparkles className="h-6 w-6" />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-lg font-semibold">Ready to generate</p>
+                    <p className="text-sm text-muted-foreground">
+                      Generation was stopped. Build your test now, or go back to
+                      tweak the configuration.
                     </p>
                   </div>
-                </div>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Test Sections</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    {generatedTest.sections.map(section => (
-                      <div key={section.id} className="p-4 rounded-lg border bg-card">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="font-semibold">{section.name}</span>
-                          <span className="text-sm text-muted-foreground">{section.description}</span>
-                        </div>
-                        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                          {section.questions.map(q => (
-                            <div key={q.id} className="flex items-center gap-2 p-2 rounded bg-muted/50 text-sm">
-                              <span className="px-2 py-0.5 rounded text-xs font-medium bg-primary/10 text-primary capitalize">{q.type.replace('_', ' ')}</span>
-                              <span className="flex-1 truncate">{q.question.substring(0, 80)}...</span>
-                              <span className="text-primary font-semibold">{q.marks} marks</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-
-                <ExportButtons
-                  test={generatedTest}
-                  onRetake={() => navigate(`/test/${generatedTest.id}`)}
-                  onNewTest={() => {
-                    setStep("input")
-                    setGeneratedTest(null)
-                  }}
-                />
-              </div>
+                  <div className="flex w-full gap-2">
+                    <Button
+                      variant="ghost"
+                      onClick={() => setStep("config")}
+                      className="gap-1.5"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                      Config
+                    </Button>
+                    <Button
+                      onClick={startGeneration}
+                      size="lg"
+                      className="flex-1 gap-2"
+                    >
+                      <Sparkles className="h-4 w-4" />
+                      Generate Test
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
             </motion.div>
           )}
         </AnimatePresence>
       </div>
 
-      {isGenerating && <LoadingOverlay onCancel={cancelGeneration} />}
+      {isGenerating && (
+        <LoadingOverlay
+          progress={progress}
+          onCancel={() => {
+            cancelGeneration()
+            setProgress(null)
+            // Return to the config screen so the user can adjust and retry,
+            // instead of stranding them on a blank "generating" step while
+            // the in-flight request winds down.
+            setStep("config")
+          }}
+        />
+      )}
     </PageTransition>
   )
 }

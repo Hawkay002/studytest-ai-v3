@@ -67,6 +67,7 @@ interface AppContextValue {
   tests: GeneratedTest[]
   saveTest: (test: GeneratedTest) => void
   getTest: (id: string) => GeneratedTest | undefined
+  removeTest: (id: string) => void
   activeTestId: string | null
   setActiveTestId: (id: string | null) => void
 
@@ -121,6 +122,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [tests],
   )
 
+  const removeTest = useCallback(
+    (id: string) => {
+      setTests((prev) => prev.filter((t) => t.id !== id))
+    },
+    [setTests],
+  )
+
   const saveResult = useCallback(
     (result: TestResult) => {
       setResults((prev) => ({ ...prev, [result.testId]: result }))
@@ -145,6 +153,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       tests,
       saveTest,
       getTest,
+      removeTest,
       activeTestId,
       setActiveTestId,
       results,
@@ -161,6 +170,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       tests,
       saveTest,
       getTest,
+      removeTest,
       activeTestId,
       results,
       saveResult,

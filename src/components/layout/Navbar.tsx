@@ -25,6 +25,7 @@ import { useApiKeyModal } from "@/components/common/ApiKeyModal"
 
 const NAV_LINKS = [
   { href: "/", label: "Home" },
+  { href: "/my-tests", label: "My Tests" },
   { href: "/history", label: "History" },
   { href: "/#how-it-works", label: "How it Works" },
 ]
@@ -36,8 +37,15 @@ export function Navbar() {
   const { open: openApiKey } = useApiKeyModal()
   const [mobileOpen, setMobileOpen] = useState(false)
 
-  const isActive = (href: string) =>
-    href === "/" ? location === "/" : location.startsWith(href.split("#")[0]) && href !== "/"
+  const isActive = (href: string) => {
+    // Anchor links (e.g. /#how-it-works) are jump-to-section links, not
+    // pages — they have no "active" state. Home is active only on exactly "/".
+    // This previously highlighted "How it Works" on every page because its
+    // base path "/" matches every route via startsWith.
+    if (href.includes("#")) return false
+    if (href === "/") return location === "/"
+    return location.startsWith(href)
+  }
 
   return (
     <header className="sticky top-0 z-40 w-full border-b bg-background/80 backdrop-blur">
@@ -64,7 +72,11 @@ export function Navbar() {
                 isActive(link.href) && "bg-accent text-accent-foreground",
               )}
             >
-              <Link href={link.href}>{link.label}</Link>
+              {link.href.includes("#") ? (
+                <a href={link.href}>{link.label}</a>
+              ) : (
+                <Link href={link.href}>{link.label}</Link>
+              )}
             </Button>
           ))}
         </nav>
@@ -133,7 +145,11 @@ export function Navbar() {
                     className="justify-start"
                     onClick={() => setMobileOpen(false)}
                   >
-                    <Link href={link.href}>{link.label}</Link>
+                    {link.href.includes("#") ? (
+                      <a href={link.href}>{link.label}</a>
+                    ) : (
+                      <Link href={link.href}>{link.label}</Link>
+                    )}
                   </Button>
                 ))}
               </div>

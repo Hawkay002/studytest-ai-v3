@@ -21,8 +21,10 @@ function format(seconds: number): string {
 }
 
 /**
- * Countdown timer for the test page. Ticks every second using setInterval.
- * `onExpire` fires exactly once when the clock hits zero.
+ * Countdown timer for the test page. Derives the remaining time from a
+ * wall-clock deadline rather than decrementing a counter, so a single
+ * setInterval runs for the whole countdown without drift accumulation and
+ * without tearing down/restarting on each tick. `onExpire` fires exactly once.
  */
 export function useTimer(
   initialSeconds: number,
@@ -32,30 +34,36 @@ export function useTimer(
   const [timeLeft, setTimeLeft] = useState(initialSeconds)
   const [isRunning, setIsRunning] = useState(false)
   const firedRef = useRef(false)
+  const deadlineRef = useRef<number | null>(null)
   const onExpireRef = useRef(onExpire)
   onExpireRef.current = onExpire
 
+  // Start a single interval when running; cleared on pause/unmount.
+  // timeLeft is intentionally omitted from deps: the remaining time is
+  // recomputed from the deadline each tick, so we never restart the interval.
   useEffect(() => {
     if (!isRunning) return
-    if (timeLeft <= 0) {
-      setIsRunning(false)
-      if (!firedRef.current) {
-        firedRef.current = true
-        onExpireRef.current?.()
-      }
-      return
-    }
+    deadlineRef.current = Date.now() + timeLeft * 1000
+
     const id = window.setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          window.clearInterval(id)
-          return 0
+      const remaining = Math.round(
+        ((deadlineRef.current ?? 0) - Date.now()) / 1000,
+      )
+      if (remaining <= 0) {
+        setTimeLeft(0)
+        window.clearInterval(id)
+        setIsRunning(false)
+        if (!firedRef.current) {
+          firedRef.current = true
+          onExpireRef.current?.()
         }
-        return prev - 1
-      })
+        return
+      }
+      setTimeLeft(remaining)
     }, 1000)
     return () => window.clearInterval(id)
-  }, [isRunning, timeLeft])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isRunning])
 
   const start = useCallback(() => setIsRunning(true), [])
   const pause = useCallback(() => setIsRunning(false), [])
@@ -63,6 +71,7 @@ export function useTimer(
   const reset = useCallback((next?: number) => {
     setIsRunning(false)
     firedRef.current = false
+    deadlineRef.current = null
     if (typeof next === "number") {
       setTotal(next)
       setTimeLeft(next)

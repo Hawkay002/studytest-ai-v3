@@ -1,3 +1,4 @@
+import { useRef } from "react"
 import { AnimatePresence } from "motion/react"
 import { Hash, Plus } from "lucide-react"
 
@@ -23,19 +24,53 @@ function parse(value: string): string[] {
 
 export function TopicChipInput({ value, onChange }: TopicChipInputProps) {
   const chips = parse(value)
+  // Mirror of `chips` kept in sync on every commit. Lets rapid, same-tick
+  // mutations (e.g. blur committing pending text the instant before a
+  // quick-add button is clicked) chain correctly instead of overwriting.
+  const chipsRef = useRef<string[]>(chips)
+  chipsRef.current = chips
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  const commit = (next: string[]) =>
-    onChange(next.map((c) => c.trim()).filter(Boolean).join(` ${SEP} `))
+  const commit = (next: string[]) => {
+    const cleaned = next.map((c) => c.trim()).filter(Boolean)
+    chipsRef.current = cleaned
+    onChange(cleaned.join(` ${SEP} `))
+  }
 
-  const addChip = (raw: string) => {
-    const label = raw.trim()
-    if (!label) return
-    if (chips.some((c) => c.toLowerCase() === label.toLowerCase())) return
-    commit([...chips, label])
+  // Accepts comma- or pipe-separated input and merges new, non-duplicate
+  // topics onto the existing chips. Lets users type "math, science, history"
+  // in one go — no Enter needed, which is especially handy on mobile keyboards.
+  const addChips = (raw: string) => {
+    const labels = raw
+      .split(/[,|]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+    if (labels.length === 0) return
+    const seen = new Set(chipsRef.current.map((c) => c.toLowerCase()))
+    const next = [...chipsRef.current]
+    for (const label of labels) {
+      const key = label.toLowerCase()
+      if (!seen.has(key)) {
+        seen.add(key)
+        next.push(label)
+      }
+    }
+    commit(next)
   }
 
   const removeChip = (label: string) =>
-    commit(chips.filter((c) => c !== label))
+    commit(chipsRef.current.filter((c) => c !== label))
+
+  // Commit whatever is in the input field (splitting on commas) and clear it.
+  const flush = () => {
+    const el = inputRef.current
+    if (!el) return
+    const pending = el.value
+    if (pending.trim()) {
+      addChips(pending)
+      el.value = ""
+    }
+  }
 
   return (
     <div className="space-y-3">
@@ -51,21 +86,24 @@ export function TopicChipInput({ value, onChange }: TopicChipInputProps) {
         </AnimatePresence>
 
         <Input
+          ref={inputRef}
           type="text"
-          placeholder="Type a topic and press Enter..."
+          inputMode="text"
+          placeholder="Type topics, separated by commas..."
           className="h-8 min-w-[180px] flex-1 border-0 px-1 shadow-none focus-visible:ring-0"
           onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === ",") {
+            // Enter commits the pending text; blur (tap away on mobile) also
+            // commits, so pressing Enter is optional.
+            if (e.key === "Enter") {
               e.preventDefault()
-              const target = e.target as HTMLInputElement
-              addChip(target.value)
-              target.value = ""
+              flush()
             }
             if (e.key === "Backspace" && e.currentTarget.value === "") {
-              const last = chips[chips.length - 1]
+              const last = chipsRef.current[chipsRef.current.length - 1]
               if (last) removeChip(last)
             }
           }}
+          onBlur={flush}
         />
       </div>
 
@@ -81,7 +119,7 @@ export function TopicChipInput({ value, onChange }: TopicChipInputProps) {
             variant="outline"
             size="sm"
             className="h-6 gap-1 px-2 text-xs"
-            onClick={() => addChip(label)}
+            onClick={() => addChips(label)}
           >
             <Plus className="h-3 w-3" />
             {label}

@@ -7,7 +7,7 @@ import { toast } from "sonner"
 import { ImageThumbnailGrid } from "@/components/input/ImageThumbnailGrid"
 import type { ThumbnailData } from "@/components/input/ImageThumbnailCard"
 import { resizeImageToFit } from "@/lib/imageUtils"
-import { cn } from "@/lib/utils"
+import { cn, uuid } from "@/lib/utils"
 
 const MAX_IMAGES = 5
 const MAX_BYTES = 10 * 1024 * 1024 // 10 MB per file
@@ -48,7 +48,7 @@ export function ImageUploadZone({ images, onChange }: ImageUploadZoneProps) {
           const before = file.size
           const { dataUrl, bytes } = await resizeImageToFit(file)
           next.push({
-            id: crypto.randomUUID(),
+            id: uuid(),
             name: file.name,
             dataUrl,
             bytes,

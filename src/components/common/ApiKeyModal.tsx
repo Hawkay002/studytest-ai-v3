@@ -27,6 +27,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { validateApiKey } from "@/lib/gemini"
 import { useApiKey } from "@/context/ApiKeyContext"
 
 interface ApiKeyModalContextValue {
@@ -66,16 +67,42 @@ function ApiKeyModal({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const { apiKey, setApiKey, clearApiKey, isKeySet, isValidating, isValid } =
-    useApiKey()
+  const { apiKey, setApiKey, clearApiKey, isKeySet } = useApiKey()
   const [draft, setDraft] = useState(apiKey)
   const [show, setShow] = useState(false)
+  // Local test state scoped to whatever is in the draft field, so users can
+  // validate a key WITHOUT saving it first.
+  const [isTesting, setIsTesting] = useState(false)
+  const [testResult, setTestResult] = useState<boolean | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // Keep the draft in sync when opening.
   const handleOpenChange = (next: boolean) => {
     if (next) setDraft(apiKey)
     onOpenChange(next)
+  }
+
+  const handleTest = async () => {
+    const key = draft.trim()
+    if (!key || isTesting) return
+    setIsTesting(true)
+    setTestResult(null)
+    try {
+      const ok = await validateApiKey(key)
+      setTestResult(ok)
+      if (!ok) {
+        toast.error("Invalid API key", {
+          description: "Check your key at aistudio.google.com",
+        })
+      }
+    } catch {
+      setTestResult(false)
+      toast.error("Could not verify key", {
+        description: "Check your connection and try again.",
+      })
+    } finally {
+      setIsTesting(false)
+    }
   }
 
   return (
@@ -104,7 +131,10 @@ function ApiKeyModal({
               spellCheck={false}
               placeholder="AIza..."
               value={draft}
-              onChange={(e) => setDraft(e.target.value)}
+              onChange={(e) => {
+                setDraft(e.target.value)
+                setTestResult(null)
+              }}
               className="pr-10"
             />
             <button
@@ -133,14 +163,15 @@ function ApiKeyModal({
         </a>
 
         <TestStatus
-          isValidating={isValidating}
-          isValid={isValid}
-          isKeySet={isKeySet}
+          draft={draft}
+          isTesting={isTesting}
+          testResult={testResult}
+          onTest={handleTest}
         />
 
         <Button
           className="w-full"
-          disabled={!draft.trim() || isValidating}
+          disabled={!draft.trim() || isTesting}
           onClick={async () => {
             setApiKey(draft.trim())
             toast.success("API key saved", {
@@ -172,16 +203,17 @@ function ApiKeyModal({
 }
 
 function TestStatus({
-  isValidating,
-  isValid,
-  isKeySet,
+  draft,
+  isTesting,
+  testResult,
+  onTest,
 }: {
-  isValidating: boolean
-  isValid: boolean | null
-  isKeySet: boolean
+  draft: string
+  isTesting: boolean
+  testResult: boolean | null
+  onTest: () => void
 }) {
-  const { validate } = useApiKey()
-  if (isValidating) {
+  if (isTesting) {
     return (
       <div className="flex items-center gap-2 rounded-md bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin text-primary" />
@@ -189,7 +221,7 @@ function TestStatus({
       </div>
     )
   }
-  if (isValid === true) {
+  if (testResult === true) {
     return (
       <div className="flex items-center gap-2 rounded-md bg-green-500/10 px-3 py-2 text-sm text-green-600 dark:text-green-500">
         <CheckCircle2 className="h-4 w-4" />
@@ -197,7 +229,7 @@ function TestStatus({
       </div>
     )
   }
-  if (isValid === false) {
+  if (testResult === false) {
     return (
       <div className="flex items-center gap-2 rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
         <XCircle className="h-4 w-4" />
@@ -210,8 +242,8 @@ function TestStatus({
       type="button"
       variant="outline"
       className="w-full"
-      disabled={!isKeySet}
-      onClick={validate}
+      disabled={!draft.trim()}
+      onClick={onTest}
     >
       Test connection
     </Button>

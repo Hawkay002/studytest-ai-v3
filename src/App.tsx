@@ -11,9 +11,11 @@ import { Toaster } from '@/components/ui/sonner';
 
 import { LandingPage } from '@/pages/LandingPage';
 import { AppPage } from '@/pages/AppPage';
+import { TestDetailPage } from '@/pages/TestDetailPage';
 import { TestPage } from '@/pages/TestPage';
 import { ResultsPage } from '@/pages/ResultsPage';
 import { HistoryPage } from '@/pages/HistoryPage';
+import { MyTestsPage } from '@/pages/MyTestsPage';
 import { NotFoundPage } from '@/pages/NotFoundPage';
 
 export default function App() {
@@ -29,9 +31,11 @@ export default function App() {
                   <Switch>
                     <Route path="/" component={LandingPage} />
                     <Route path="/app" component={AppPage} />
-                    <Route path="/test/:id" component={TestPage} />
+                    <Route path="/test/:id" component={TestDetailPage} />
+                    <Route path="/test/:id/take" component={TestPage} />
                     <Route path="/results/:id" component={ResultsPage} />
                     <Route path="/history" component={HistoryPage} />
+                    <Route path="/my-tests" component={MyTestsPage} />
                     <Route component={NotFoundPage} />
                   </Switch>
                 </AnimatePresence>
