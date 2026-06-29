@@ -166,7 +166,7 @@ export function UploadAnswerScript({ test }: UploadAnswerScriptProps) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="relative space-y-4">
         {/* Dropzone */}
         <div
           {...getRootProps()}
@@ -275,6 +275,7 @@ export function UploadAnswerScript({ test }: UploadAnswerScriptProps) {
 
       {isGrading && (
         <LoadingOverlay
+          absolute
           title="Grading your answer script"
           progress={
             gradingProgress

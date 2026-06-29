@@ -24,12 +24,21 @@ interface LoadingOverlayProps {
   // checklist showing which sections are done vs in progress.
   progress?: GenerationProgress | null
   title?: string
+  /**
+   * When true, the overlay is positioned absolutely to cover its nearest
+   * positioned ancestor (instead of the viewport via `fixed`). Use this when
+   * the overlay lives inside a scrollable container — e.g. a Dialog — so it
+   * covers the FULL scrollable area (including the scrolled-off bottom) rather
+   * than leaving an unblurred strip.
+   */
+  absolute?: boolean
 }
 
 export function LoadingOverlay({
   onCancel,
   progress = null,
   title = "Generating your test",
+  absolute = false,
 }: LoadingOverlayProps) {
   const reduce = useReducedMotion()
   const [index, setIndex] = useState(0)
@@ -47,7 +56,11 @@ export function LoadingOverlay({
     : 0
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/80 px-6 backdrop-blur-sm">
+    <div
+      className={`${
+        absolute ? "absolute" : "fixed"
+      } inset-0 z-50 flex flex-col items-center justify-center bg-background/80 px-6 backdrop-blur-sm`}
+    >
       <div className="flex w-full max-w-sm flex-col items-center gap-6 text-center">
         <Loader2 className="h-10 w-10 animate-spin text-primary" />
 

@@ -478,7 +478,12 @@ async function generateTestChunked(
 
 /**
  * Semantic Grading: Uses LLM to judge if a student's answer (text or image)
- * captures the core principle of the model answer.
+ * captures the GIST / core principle of the model answer.
+ *
+ * Critical: descriptive answers must NEVER be exact-matched against the model
+ * answer — a human phrases things differently. We grade on conceptual overlap,
+ * rewarding correct understanding and valid reasoning even when the wording
+ * differs entirely. Partial credit is the norm, not all-or-nothing.
  */
 export async function gradeSemantic(
   apiKey: string,
@@ -486,50 +491,99 @@ export async function gradeSemantic(
   userAnswer: string | InlineImagePart[],
   language: string,
 ): Promise<{ score: number; feedback: string }> {
-  const prompt = `
-    You are an expert academic grader. Grade the following answer based on its conceptual understanding and the "gist" of the topic.
-
-    Model Answer: ${question.answer}
-    User Answer: ${typeof userAnswer === "string" ? userAnswer : "[Image Uploaded]"}
-    Language: ${language}
-    Max Marks: ${question.marks}
-
-    Criteria:
-    1. Does the user understand the core principle?
-    2. Is the explanation logically sound?
-    3. If it's a "twisted" or "deep knowledge" question, does the user show creative synthesis?
-
-    Return ONLY a JSON object:
-    { "score": number, "feedback": "concise explanation in ${language} of why this score was given" }
-  `
+  const answerView =
+    typeof userAnswer === "string" ? userAnswer : "[Image Uploaded]"
+  const prompt = [
+    "You are a generous, fair academic grader marking a descriptive/essay answer.",
+    "Grade on the GIST and conceptual understanding — NOT on matching the model answer's exact wording.",
+    "A student who expresses the same idea with completely different words and still shows correct understanding should earn full marks.",
+    "Only dock marks for genuinely missing key concepts or factual errors.",
+    "",
+    `Question: ${question.question}`,
+    `Model answer (reference of the key concepts, not required wording): ${question.answer}`,
+    `Student's answer: ${answerView}`,
+    `Language: ${language}`,
+    `Max marks: ${question.marks}`,
+    "",
+    "Scoring guidance (out of max marks):",
+    "- Full marks: the core idea and key reasoning are present and correct (wording irrelevant).",
+    "- High partial (≥70%): most key concepts present; minor gaps or imprecision.",
+    "- Mid partial (~50%): the right idea but incomplete or partially correct.",
+    "- Low partial (~25%): touches the topic but misses most key concepts.",
+    "- Zero only: blank, irrelevant, or fundamentally wrong.",
+    "Default to partial credit whenever the student shows some correct understanding.",
+    "",
+    'Return ONLY a JSON object: {"score": number, "feedback": "short note in ' +
+      language +
+      ' on which concepts were present/missing"}',
+  ].join("\n")
 
   const parts: Part[] = [{ text: prompt }]
   if (Array.isArray(userAnswer)) {
     parts.push(...userAnswer)
   }
 
-  try {
-    const { text } = await callModel(apiKey, {
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 1024,
-        responseMimeType: "application/json",
-      },
-      parts,
-      models: [VISION_MODEL, VISION_MODEL_FALLBACK],
-    })
-    const cleaned = text.replace(/```json|```/g, "").trim()
-    const parsed = JSON.parse(cleaned)
-    return {
-      score: Number(parsed.score) || 0,
-      feedback: String(parsed.feedback || "No feedback provided."),
-    }
-  } catch (err) {
-    console.error("Semantic grading failed:", err)
-    // Reject so callers can fall back; a transient API failure shouldn't
-    // silently zero out a student's free-text answer.
-    throw err
+  // Candidate order: try Gemma first (the configured text model), then fall
+  // back to the Gemini vision models. Gemma lacks structured-output mode, so a
+  // successful HTTP response can still be prose rather than JSON — we validate
+  // the parse ourselves and fall through to the next model on non-JSON output
+  // (not just network errors). This gives Gemma the first shot while
+  // guaranteeing we still get a valid grade if it drifts.
+  const parsed = await callModelWithJson(
+    apiKey,
+    prompt,
+    Array.isArray(userAnswer) ? userAnswer : [],
+    { temperature: 0.3, maxOutputTokens: 1024 },
+    [TEXT_MODEL, VISION_MODEL, VISION_MODEL_FALLBACK],
+  )
+  if (!parsed) {
+    throw new Error("Semantic grading failed: no valid JSON from any model.")
   }
+  return {
+    score: Number((parsed as Record<string, unknown>).score) || 0,
+    feedback:
+      String((parsed as Record<string, unknown>).feedback) ||
+      "No feedback provided.",
+  }
+}
+
+/**
+ * Call models in order, returning the first successfully PARSED JSON result.
+ * Falls through on both network errors AND non-JSON (prose) output — important
+ * for Gemma, which can return a successful HTTP response that isn't JSON.
+ * Returns null if every candidate fails; the caller decides how to degrade.
+ */
+async function callModelWithJson(
+  apiKey: string,
+  prompt: string,
+  imageParts: InlineImagePart[],
+  generationConfig: Record<string, unknown>,
+  models: string[],
+): Promise<Record<string, unknown> | null> {
+  const parts: Part[] = [{ text: prompt }, ...imageParts]
+  let lastMsg = "Unknown error."
+  for (let i = 0; i < models.length; i++) {
+    try {
+      const { text } = await callModel(apiKey, {
+        generationConfig: { ...generationConfig, responseMimeType: "application/json" },
+        parts,
+        models: [models[i]],
+      })
+      const cleaned = text.replace(/```json|```/g, "").trim()
+      return JSON.parse(cleaned) as Record<string, unknown>
+    } catch (err) {
+      lastMsg = err instanceof Error ? err.message : String(err)
+      // Auth errors won't be fixed by switching models — stop.
+      if (/api key|api_key|permission|denied|invalid/i.test(lastMsg)) return null
+      if (i < models.length - 1) {
+        console.warn(
+          `[StudyTest] ${models[i]} returned no valid JSON ("${lastMsg}"), trying ${models[i + 1]}`,
+        )
+      }
+    }
+  }
+  console.error("[StudyTest] all models failed to return JSON:", lastMsg)
+  return null
 }
 
 export function gradeTest(
@@ -641,13 +695,18 @@ export async function gradeTestSemantic(
               })
             })
             .catch(() => {
-              // Degrade gracefully: fall back to local matching for this answer.
-              const ok = isCorrectLocal(q, givenText)
+              // The semantic grader failed (transient API error). For
+              // DESCRIPTIVE answers, exact-matching the model answer would be
+              // wrong — a human phrases things differently and would unfairly
+              // score 0. Fall back to a generous partial-credit heuristic:
+              // substantial answers that touch the topic get at least half
+              // marks (the grader couldn't run, so we don't penalize the
+              // student for a server-side blip). Full marks only if the
+              // answer clearly covers the model answer's key terms.
+              const fallback = semanticFallbackScore(q, givenText)
               grades.set(q.id, {
-                score: ok ? q.marks : 0,
-                feedback: ok
-                  ? "Correct!"
-                  : "Incorrect. See explanation.",
+                score: fallback.score,
+                feedback: fallback.feedback,
                 answer: givenText,
                 answered,
               })
@@ -767,20 +826,17 @@ export async function gradeFromScript(
       "--- ANSWER SCRIPT TEXT ---",
       options.textContent,
     ].join("\n")
-    try {
-      const { text } = await callModel(apiKey, {
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 8192,
-          responseMimeType: "application/json",
-        },
-        parts: [{ text: prompt }],
-        models: [VISION_MODEL, VISION_MODEL_FALLBACK],
-      })
-      mergeExtracted(JSON.parse(text.replace(/```json|```/g, "").trim()))
-    } catch (err) {
-      console.error("[StudyTest] text-script extraction failed:", err)
-    }
+    // Gemma first (configured text model), fall back to Gemini if Gemma's
+    // output isn't valid JSON. Validation is the parse itself: a prose
+    // response fails JSON.parse and we try the next candidate.
+    const extracted = await callModelWithJson(
+      apiKey,
+      prompt,
+      [],
+      { temperature: 0.1, maxOutputTokens: 8192 },
+      [TEXT_MODEL, VISION_MODEL, VISION_MODEL_FALLBACK],
+    )
+    if (extracted) mergeExtracted(extracted)
   }
 
   // --- Image path (scanned/typed PDF or photos): one small call per page. ---
@@ -855,6 +911,68 @@ function buildRoster(questions: Question[]): string {
     })
     .join("\n")
 }
+
+/**
+ * Fallback when the semantic (AI) grader can't run for a descriptive answer.
+ *
+ * Exact-matching the model answer is wrong for free-text (a human phrases
+ * things differently and would unfairly score 0). Instead we apply a generous
+ * partial-credit heuristic based on content overlap with the model answer:
+ * a substantive answer that covers many of the model answer's key terms earns
+ * high partial credit; a brief but on-topic answer earns half; a blank or
+ * clearly off-topic answer earns zero. We never silently zero a real attempt
+ * because a server-side grading blip happened.
+ */
+function semanticFallbackScore(
+  q: Question,
+  given: string,
+): { score: number; feedback: string } {
+  const answer = given.trim()
+  if (!answer) {
+    return { score: 0, feedback: "No answer provided." }
+  }
+  // Tokenize the model answer into meaningful terms (drop short stopwords).
+  const modelTerms = (q.answer.toLowerCase().match(/[a-z][a-z'-]{3,}/g) ?? [])
+    .filter((t) => !STOPWORDS.has(t))
+  const distinctModel = new Set(modelTerms)
+  // How many distinct model-answer terms appear in the student's answer.
+  const givenLower = answer.toLowerCase()
+  const hits = distinctModel.size
+    ? [...distinctModel].filter((t) => givenLower.includes(t)).length
+    : 0
+  const coverage = distinctModel.size ? hits / distinctModel.size : 0
+
+  // Generous partial-credit bands (the AI grader couldn't run, so we don't
+  // penalize the student for a transient failure). Substantive answers get at
+  // least half; high term-overlap gets near-full.
+  let ratio: number
+  if (coverage >= 0.6) ratio = 0.9 // strong overlap → near full
+  else if (coverage >= 0.35) ratio = 0.7
+  else if (answer.split(/\s+/).length >= 25) ratio = 0.5 // substantive but low overlap
+  else if (answer.split(/\s+/).length >= 8) ratio = 0.35
+  else ratio = 0.25 // brief, on-topic-ish
+  // A clearly off-topic one-liner shouldn't get much.
+  if (coverage === 0 && answer.split(/\s+/).length < 8) ratio = 0.1
+
+  const score = Math.round(q.marks * ratio)
+  return {
+    score,
+    feedback:
+      "Auto-graded on partial credit (the AI grader was briefly unavailable). " +
+      "Awarded based on how much of the key content your answer covered.",
+  }
+}
+
+const STOPWORDS = new Set([
+  "the", "and", "for", "are", "but", "not", "you", "all", "any", "can", "had",
+  "her", "was", "one", "our", "out", "has", "have", "from", "this", "that",
+  "with", "will", "your", "each", "which", "their", "said", "they", "were",
+  "been", "more", "than", "into", "them", "then", "some", "what", "such",
+  "when", "where", "who", "whom", "why", "how", "into", "its", "it's", "per",
+  "via", "over", "under", "also", "thus", "hence", "upon", "both", "same",
+  "most", "very", "much", "many", "such", "other", "about", "above", "below",
+  "during", "before", "after", "between", "into", "through",
+])
 
 function clampScore(score: number, max: number): number {
   const n = Number(score) || 0
