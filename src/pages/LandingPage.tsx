@@ -230,24 +230,6 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Question type previews */}
-      <section className="container border-t py-16 md:py-24">
-        <h2 className="mb-12 text-center text-2xl font-bold md:text-3xl">
-          Five ways to test yourself
-        </h2>
-        <div className="mx-auto grid max-w-3xl grid-cols-2 gap-4 md:grid-cols-5">
-          {TYPES.map((t) => (
-            <div
-              key={t.label}
-              className="flex flex-col items-center gap-3 rounded-xl border bg-card p-6 text-center"
-            >
-              <t.icon className="h-7 w-7 text-primary" />
-              <span className="text-sm font-medium">{t.label}</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
       {/* CTA banner */}
       <section className="container border-t py-16 md:py-24">
         <div className="relative overflow-hidden rounded-3xl bg-primary p-8 text-center text-primary-foreground md:p-16">
